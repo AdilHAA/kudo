@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Виртуальное окружение
+venv/
+env/
+ENV/
+
+# Модели и данные AutoGluon
+autogluon_model_*/
+*.model
+
+# Большие CSV файлы с исходными данными
+final_df_latest2.csv
+denied.csv
+completed (1).csv
+
+# Временные файлы Jupyter
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+*.nbconvert.ipynb
+
+# Прочие временные файлы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+*.swp
+*~
+
+# Сохраняем только важные результаты
+# (но не исходные большие CSV)
+# Оставляем небольшие результаты анализа
+!agg_forecast_*.csv
+!top_*.csv
+!potential_sales.csv 
