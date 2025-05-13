@@ -89,9 +89,9 @@ def main():
             print(f"Found {unique_skus} unique SKUs")
             
             # Фильтруем до топ-200 SKU
-            print(f"Filtering to focus on top 200 SKUs...")
+            print(f"Filtering to focus on top 150 SKUs...")
             # Get top SKUs by the current target variable
-            top_skus = get_top_performers(consolidated_data, 'sku', target_variable, n=200)
+            top_skus = get_top_performers(consolidated_data, 'sku', target_variable, n=ts_data_sku['item_id'].nunique())
             
             # Обеспечиваем соответствие форматов
             # Выводим первые несколько строк для отладки

@@ -438,8 +438,8 @@ def forecast_sales_autogluon(time_series_df, periods=12, target='final_price', i
         
         predictor.fit(
             ts_data,
-            presets="best_quality",  # Изменено с "medium_quality" на "best_quality"
-            time_limit=3600  # 1 hour
+            presets="high_quality",
+            time_limit=1200  
         )
         
         print("AutoGluon training complete")
