@@ -32,8 +32,8 @@ def main():
         
         # 1. Load and consolidate data
         print("\n1. Loading and consolidating data...")
-        completed_data_path = 'final_df_latest2.csv'
-        uncompleted_data_path = 'denied.csv'
+        completed_data_path = 'final_df_latest2.parquet'
+        uncompleted_data_path = 'denied.parquet'
         
         # Check if files exist
         if not os.path.exists(completed_data_path):
@@ -49,7 +49,7 @@ def main():
         potential_sales = calculate_potential_sales(consolidated_data)
         print("Top 5 SKUs by potential revenue:")
         print(potential_sales.sort_values('potential_revenue', ascending=False).head())
-        potential_sales.sort_values('potential_revenue', ascending=False).head().to_csv("potential_sales.csv")
+        potential_sales.sort_values('potential_revenue', ascending=False).head().to_parquet("potential_sales.parquet")
         
         # 3. Sales forecasting
         print("\n3. Sales forecasting...")
@@ -97,7 +97,7 @@ def main():
                 # Process and save the results
                 if not forecast_result.empty:
                     print("Saving forecast results...")
-                    forecast_result.to_csv(f"forecast_{forecast_method}_{target_variable}.csv", index=False)
+                    forecast_result.to_parquet(f"forecast_{forecast_method}_{target_variable}.parquet", index=False)
                     
                     # Aggregate across all SKUs if needed
                     if 'item_id' in forecast_result.columns:
@@ -105,7 +105,7 @@ def main():
                         agg_cols = [col for col in forecast_result.columns 
                                    if col not in ['item_id', 'timestamp']]
                         agg_forecast = forecast_result.groupby('timestamp')[agg_cols].sum().reset_index()
-                        agg_forecast.to_csv(f"agg_forecast_{forecast_method}_{target_variable}.csv", index=False)
+                        agg_forecast.to_parquet(f"agg_forecast_{forecast_method}_{target_variable}.parquet", index=False)
                         print(f"\nAggregate forecast for {target_variable} across all SKUs:")
                         print(agg_forecast)
                 else:
@@ -122,9 +122,9 @@ def main():
                 
                 # Save the prepared time series
                 if isinstance(time_series_global.index, pd.DatetimeIndex):
-                    time_series_global.reset_index().to_csv(f"time_series_global_{target_variable}.csv", index=False)
+                    time_series_global.reset_index().to_parquet(f"time_series_global_{target_variable}.parquet", index=False)
                 else:
-                    time_series_global.to_csv(f"time_series_global_{target_variable}.csv", index=False)
+                    time_series_global.to_parquet(f"time_series_global_{target_variable}.parquet", index=False)
                 
                 # Run the forecast
                 print(f"Running {forecast_method} forecast...")
@@ -139,9 +139,9 @@ def main():
                 if not forecast_result.empty:
                     print("Saving forecast results...")
                     if isinstance(forecast_result.index, pd.DatetimeIndex):
-                        forecast_result.reset_index().to_csv(f"forecast_{forecast_method}_{target_variable}.csv", index=False)
+                        forecast_result.reset_index().to_parquet(f"forecast_{forecast_method}_{target_variable}.parquet", index=False)
                     else:
-                        forecast_result.to_csv(f"forecast_{forecast_method}_{target_variable}.csv", index=False)
+                        forecast_result.to_parquet(f"forecast_{forecast_method}_{target_variable}.parquet", index=False)
                     
                     print(f"\nForecast for {target_variable} next 12 months:")
                     if hasattr(forecast_result, 'tail'):
@@ -152,7 +152,7 @@ def main():
                     print(f"No forecast results were returned for {target_variable}")
         
         # 4. Category-level forecasting (optional)
-        run_category_forecasts = False
+        run_category_forecasts = True
         if run_category_forecasts:
             # Для каждой целевой переменной делаем прогнозирование по категориям
             for target_variable in target_variables:
@@ -172,12 +172,12 @@ def main():
                         print(forecast.tail(12) if hasattr(forecast, 'tail') else forecast)
                         
                         # Save to CSV
-                        filename = f"forecast_{category}_{forecast_method}_{target_variable}.csv"
+                        filename = f"forecast_{category}_{forecast_method}_{target_variable}.parquet"
                         filename = filename.replace(" ", "_").replace("/", "_")
                         if isinstance(forecast.index, pd.DatetimeIndex):
-                            forecast.reset_index().to_csv(filename, index=False)
+                            forecast.reset_index().to_parquet(filename, index=False)
                         else:
-                            forecast.to_csv(filename, index=False)
+                            forecast.to_parquet(filename, index=False)
         
         # 5. Generate trend reports
         print("\n5. Generating trend reports...")
@@ -195,15 +195,15 @@ def main():
         top_clients = get_top_performers(consolidated_data, 'client_id', 'final_price')
         print("\nTop 10 clients by revenue:")
         print(top_clients)
-        top_clients.to_csv("top_clients.csv")
+        top_clients.to_parquet("top_clients.parquet")
         
         # Top SKUs by quantity
         top_skus = get_top_performers(consolidated_data, 'sku', 'quantity')
         print("\nTop 10 SKUs by quantity:")
         print(top_skus)
-        top_skus.to_csv("top_skus.csv")
+        top_skus.to_parquet("top_skus.parquet")
         
-        print("\nAnalysis complete! Results saved to CSV files.")
+        print("\nAnalysis complete! Results saved to Parquet files.")
         
     except Exception as e:
         print(f"Error in analysis: {e}")

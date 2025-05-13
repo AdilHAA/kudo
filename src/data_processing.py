@@ -1,15 +1,19 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
 
 
 def load_and_clean_data(file_path):
     """
-    Загрузка и очистка данных из CSV файла
+    Загрузка и очистка данных из файла (parquet или csv)
     """
     # Загрузка данных
-    print(f"Loading data from {file_path}...")
-    df = pd.read_csv(file_path, parse_dates=['Дата счёта'])
+    if file_path.endswith('.parquet'):
+        df = pd.read_parquet(file_path)
+    else:
+        df = pd.read_csv(file_path, parse_dates=['Дата счёта'])
     
     # Переименование колонок для удобства
     column_mapping = {
@@ -41,14 +45,18 @@ def load_and_clean_data(file_path):
         'final_price': 0
     }, inplace=True)
     
-    # Добавление временных компонентов для анализа
+    # Проверяем, является ли столбец invoice_date типом datetime
     if 'invoice_date' in df.columns:
+        # Преобразуем в datetime, если не является
+        if not pd.api.types.is_datetime64_any_dtype(df['invoice_date']):
+            df['invoice_date'] = pd.to_datetime(df['invoice_date'], errors='coerce')
+            
+        # Добавление временных компонентов для анализа
         df['year'] = df['invoice_date'].dt.year
         df['month'] = df['invoice_date'].dt.month
         df['quarter'] = df['invoice_date'].dt.quarter
         df['date_key'] = df['invoice_date'].dt.to_period('M').dt.start_time
     
-    print(f"Loaded {len(df)} records from {file_path}")
     return df
 
 
@@ -103,77 +111,113 @@ def consolidate_orders(completed_orders_path, uncompleted_orders_path):
     uncompleted['order_status'] = 'uncompleted'
     
     # Консолидация данных
-    print("Consolidating orders...")
     consolidated = pd.concat([completed, uncompleted], sort=False)
     consolidated = consolidated.fillna(0)
     consolidated = consolidated.replace('UNK', 'Unk')
     
-    # Set final_price to 0 for uncompleted orders
+    # Установка значения final_price на 0 для невыполненных заказов
     consolidated.loc[consolidated['order_status'] == 'uncompleted', 'final_price'] = 0
     
-    print(f"Consolidated dataset has {len(consolidated)} records")
     return consolidated
 
 
 def prepare_time_series(data, freq='M', group_by_sku=False):
     """
-    Подготовка временных рядов для прогнозирования.
-    Может агрегировать данные глобально или по SKU.
-    """
-    print(f"Preparing time series (group_by_sku={group_by_sku})...")
-    data_copy = data.copy()
-
-    if 'order_status' in data_copy.columns:
-        data_copy = data_copy[data_copy['order_status'] == 'completed']
-        print(f"Filtered to {len(data_copy)} completed orders")
-
-    # Ensure date column is datetime
-    if 'invoice_date' not in data_copy.columns:
-        raise ValueError("Column 'invoice_date' is missing")
+    Подготовка временных рядов для прогнозирования
+    
+    Параметры:
+        data (DataFrame): датафрейм с данными заказов
+        freq (str): частота временного ряда ('D' для дней, 'W' для недель, 'M' для месяцев)
+        group_by_sku (bool): если True, то данные группируются по SKU для многошагового прогнозирования
         
-    data_copy['invoice_date'] = pd.to_datetime(data_copy['invoice_date'])
-
-    # Create 'date_key' consistently
-    if freq == 'M':
-        data_copy['date_key'] = data_copy['invoice_date'].dt.to_period('M').dt.start_time
-    elif freq == 'W':
-        data_copy['date_key'] = data_copy['invoice_date'].dt.to_period('W').dt.start_time
-    else:
-        data_copy['date_key'] = data_copy['invoice_date'].dt.floor('D')  # Default to daily
-
-    # Add week of month for more features
-    data_copy['week_of_month'] = ((data_copy['invoice_date'].dt.day - 1) // 7) + 1
-
-    # Define grouping keys
-    grouping_keys = ['date_key']
+    Возвращает:
+        DataFrame: временной ряд, подготовленный для прогнозирования
+    """
+    # Копируем данные, чтобы избежать изменений во входных данных
+    data_copy = data.copy()
+    
+    # Если данные нужно сгруппировать по SKU (для AutoGluon)
     if group_by_sku:
-        if 'sku' not in data_copy.columns:
-            raise ValueError("Column 'sku' is missing for SKU grouping")
-        grouping_keys.append('sku')
-
-    # Define aggregations
-    agg_dict = {
-        'quantity': 'sum',
-        'final_price': 'sum',
-        'price': 'mean'
-    }
-
-    # Add any numeric columns as features with mean aggregation
-    for col in data_copy.columns:
-        if (col not in agg_dict and col not in grouping_keys and
-            col not in ['invoice_date', 'Unnamed: 0', 'client_id'] and
-            pd.api.types.is_numeric_dtype(data_copy[col])):
-            agg_dict[col] = 'mean'
-
-    # Weekly revenue calculations
-    if not group_by_sku:  # Only for global aggregation
+        # Выбираем только выполненные заказы
+        if 'order_status' in data_copy.columns:
+            data_copy = data_copy[data_copy['order_status'] == 'completed']
+        
+        # Убедимся, что у нас есть колонка с датой
+        if 'date_key' not in data_copy.columns and 'invoice_date' in data_copy.columns:
+            data_copy['date_key'] = data_copy['invoice_date'].dt.to_period(freq).dt.start_time
+        
+        # Группировка данных по SKU и дате
+        grouped_data = data_copy.groupby(['sku', 'date_key']).agg({
+            'quantity': 'sum',
+            'final_price': 'sum',
+            'price': 'mean'
+        }).reset_index()
+        
+        # Переименовываем колонки для AutoGluon
+        grouped_data = grouped_data.rename(columns={'sku': 'item_id'})
+        
+        return grouped_data
+        
+    else:
+        # Группировка данных по дате
+        if 'order_status' in data_copy.columns:
+            data_copy = data_copy[data_copy['order_status'] == 'completed']
+        
+        # Убедимся, что у нас есть колонка с датой
+        if 'date_key' not in data_copy.columns and 'invoice_date' in data_copy.columns:
+            data_copy['date_key'] = data_copy['invoice_date'].dt.to_period(freq).dt.start_time
+        
+        # Добавляем расчет недели месяца
+        data_copy['week_of_month'] = ((data_copy['invoice_date'].dt.day - 1) // 7) + 1
+        
+        # Функция для нахождения наиболее частого значения
+        def most_frequent(series):
+            if series.empty:
+                return None
+            counts = series.value_counts()
+            if counts.empty:
+                return None
+            return counts.index[0]
+        
+        # Создадим словарь агрегаций
+        agg_dict = {}
+        
+        # Добавляем базовые агрегации если соответствующие столбцы существуют
+        if 'quantity' in data_copy.columns:
+            agg_dict['quantity'] = 'sum'
+        if 'final_price' in data_copy.columns:
+            agg_dict['final_price'] = 'sum'
+        
+        # Определяем типы столбцов и добавляем соответствующие агрегации
+        for col in data_copy.columns:
+            # Пропускаем уже обработанные столбцы и служебные
+            if col in agg_dict or col in ['date_key', 'order_status', 'invoice_date', 'Unnamed: 0', 
+                                         'Дата год-месяц', 'client_id', 'sku', 'time_idx', 
+                                         'days_until_holiday', 'is_holiday', 'day_of_week', 'week_of_month']:
+                continue
+            
+            # Определяем тип данных и выбираем подходящую агрегацию
+            dtype = data_copy[col].dtype
+            if pd.api.types.is_numeric_dtype(dtype):  # Для числовых колонок
+                agg_dict[col] = 'max'
+            elif pd.api.types.is_object_dtype(dtype) or pd.api.types.is_categorical_dtype(dtype):  # Для категориальных
+                agg_dict[col] = most_frequent
+            elif pd.api.types.is_datetime64_dtype(dtype):  # Для дат
+                agg_dict[col] = 'max'
+            elif pd.api.types.is_bool_dtype(dtype):  # Для булевых
+                agg_dict[col] = 'any'
+        
+        # Вычисляем суммарную прибыль по неделям месяца
         weekly_sums = data_copy.groupby(['date_key', 'week_of_month'])['final_price'].sum().reset_index()
+        
+        # Преобразуем в широкий формат
         weekly_pivot = weekly_sums.pivot(
-            index='date_key',
-            columns='week_of_month',
+            index='date_key', 
+            columns='week_of_month', 
             values='final_price'
         ).fillna(0)
         
+        # Переименовываем числовые столбцы в строковые
         weekly_pivot = weekly_pivot.rename(columns={
             1: 'week_1_revenue',
             2: 'week_2_revenue',
@@ -181,40 +225,24 @@ def prepare_time_series(data, freq='M', group_by_sku=False):
             4: 'week_4_revenue',
             5: 'week_5_revenue'
         })
-
-    # Group and aggregate
-    time_series = data_copy.groupby(grouping_keys).agg(agg_dict).reset_index()
-
-    # Rename sku to item_id if grouped by SKU (for AutoGluon compatibility)
-    if group_by_sku:
-        time_series.rename(columns={'sku': 'item_id'}, inplace=True)
-        time_series['item_id'] = time_series['item_id'].astype(str)
-
-    # For global aggregation, merge with weekly data
-    if not group_by_sku and 'weekly_pivot' in locals():
+        
+        # Группировка данных по периоду времени с учетом всех агрегаций
+        time_series = data_copy.groupby('date_key').agg(agg_dict).reset_index()
         time_series = time_series.merge(weekly_pivot, on='date_key', how='left')
         time_series = time_series.fillna(0)
         
-        # Set index only if not grouped by sku
+        # Установка даты в качестве индекса
         time_series.set_index('date_key', inplace=True)
+        
+        # Убедимся, что индекс отсортирован
         time_series = time_series.sort_index()
-    else:
-        # Sort by time and item_id (исправляем здесь)
-        if group_by_sku:
-            # Используем item_id вместо sku для сортировки, так как мы переименовали поле
-            time_series = time_series.sort_values(by=['date_key', 'item_id'])
-        else:
-            time_series = time_series.sort_values(by=['date_key'])
-
-    print(f"Time series preparation complete with shape {time_series.shape}")
-    return time_series
+        return time_series
 
 
 def calculate_potential_sales(consolidated_data):
     """
     Расчет потенциальных продаж на основе фактических и упущенных заказов
     """
-    print("Calculating potential sales...")
     # Определяем измерения для группировки
     dimensions = ['sku', 'year', 'month', 'quarter', 'region', 'group', 'category']
     existing_dims = [d for d in dimensions if d in consolidated_data.columns]
@@ -249,7 +277,6 @@ def calculate_potential_sales(consolidated_data):
     potential_data['potential_revenue'] = potential_data['actual_revenue'] + potential_data['lost_revenue']
     potential_data['loss_ratio'] = potential_data['lost_revenue'] / potential_data['potential_revenue'].replace(0, np.nan)
     
-    print("Potential sales calculation complete")
     return potential_data
 
 
@@ -257,7 +284,6 @@ def generate_trend_report(data, dimensions, metrics, time_unit='month'):
     """
     Генерация аналитических отчетов по трендам по разным измерениям
     """
-    print("Generating trend reports...")
     # Подготовка данных с временным ключом
     if 'date_key' not in data.columns and 'invoice_date' in data.columns:
         if time_unit == 'month':
@@ -306,7 +332,6 @@ def generate_trend_report(data, dimensions, metrics, time_unit='month'):
         # Сохранение отчета по измерению
         reports[dimension] = dimension_trends
     
-    print(f"Generated trend reports for {len(reports)} dimensions")
     return reports
 
 
@@ -316,7 +341,7 @@ def get_top_performers(data, dimension, metric, n=10, ascending=False):
     """
     # Проверка наличия колонок
     if dimension not in data.columns or metric not in data.columns:
-        raise ValueError(f"Columns '{dimension}' or '{metric}' not found in data")
+        raise ValueError(f"Колонки '{dimension}' или '{metric}' не найдены в данных")
     
     # Группировка и расчет суммы метрики
     summary = data.groupby(dimension).agg({
@@ -326,4 +351,26 @@ def get_top_performers(data, dimension, metric, n=10, ascending=False):
     # Сортировка и выбор топ-N
     top_n = summary.sort_values(metric, ascending=ascending).head(n)
     
-    return top_n 
+    return top_n
+
+
+def save_data(df, file_path, index=False):
+    """
+    Сохраняет DataFrame в формат Parquet (или CSV в зависимости от расширения файла)
+    
+    Параметры:
+        df (DataFrame): DataFrame для сохранения
+        file_path (str): Путь для сохранения
+        index (bool): Сохранять ли индекс
+    """
+    # Создаем директорию, если она не существует
+    import os
+    os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+    
+    # Сохраняем в нужном формате
+    if file_path.endswith('.parquet'):
+        df.to_parquet(file_path, index=index)
+    else:
+        df.to_csv(file_path, index=index)
+    
+    return file_path 

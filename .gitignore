@@ -20,10 +20,7 @@ ENV/
 autogluon_model_*/
 *.model
 
-# Большие CSV файлы с исходными данными
-final_df_latest2.csv
-denied.csv
-completed (1).csv
+
 
 # Временные файлы Jupyter
 .ipynb_checkpoints
@@ -40,8 +37,9 @@ Thumbs.db
 *~
 
 # Сохраняем только важные результаты
-# (но не исходные большие CSV)
+# (но не исходные большие Parquet файлы)
 # Оставляем небольшие результаты анализа
-!agg_forecast_*.csv
-!top_*.csv
-!potential_sales.csv 
+!forecast_*.parquet
+!time_series_*.parquet
+!top_*.parquet
+!potential_sales.parquet 

@@ -6,17 +6,17 @@
 
 ```
 ├── data/              # Каталог для хранения данных
-│   ├── final_df_latest2.csv    # Исходные данные о продажах (большой файл)
-│   ├── denied.csv              # Данные о неудавшихся продажах (большой файл)
+│   ├── final_df_latest2.parquet    # Исходные данные о продажах (большой файл)
+│   ├── denied.parquet              # Данные о неудавшихся продажах (большой файл)
 │   └── ...
 ├── models/            # Сохраненные модели AutoGluon и других алгоритмов
 │   ├── autogluon_model_final_price/
 │   └── autogluon_model_quantity/
 ├── results/           # Результаты анализа и прогнозирования
-│   ├── agg_forecast_autogluon_final_price.csv
-│   ├── agg_forecast_autogluon_quantity.csv
-│   ├── top_clients.csv
-│   └── top_skus.csv
+│   ├── forecast_average_final_price.parquet
+│   ├── forecast_average_quantity.parquet
+│   ├── top_clients.parquet
+│   └── top_skus.parquet
 ├── scripts/           # Скрипты запуска и управления
 │   ├── main.py        # Основной скрипт анализа
 │   └── run.py         # Скрипт для настройки окружения и запуска
@@ -81,4 +81,4 @@
 
 ## Результаты
 
-После выполнения анализа результаты будут сохранены в каталоге `results/`. 
+После выполнения анализа результаты будут сохранены в каталоге `results/` в формате Parquet для эффективного использования. 

@@ -16,7 +16,8 @@ from src.data_processing import (
     prepare_time_series,
     calculate_potential_sales,
     generate_trend_report,
-    get_top_performers
+    get_top_performers,
+    save_data
 )
 
 from src.forecasting import (
@@ -36,8 +37,8 @@ def main():
         
         # 1. Load and consolidate data
         print("\n1. Loading and consolidating data...")
-        completed_data_path = os.path.join('data', 'final_df_latest2.csv')
-        uncompleted_data_path = os.path.join('data', 'denied.csv')
+        completed_data_path = os.path.join('data', 'final_df_latest2.parquet')
+        uncompleted_data_path = os.path.join('data', 'denied.parquet')
         
         # Check if files exist
         if not os.path.exists(completed_data_path):
@@ -57,8 +58,8 @@ def main():
         # Сохраняем результаты в папку results
         results_dir = 'results'
         os.makedirs(results_dir, exist_ok=True)
-        potential_sales.sort_values('potential_revenue', ascending=False).head().to_csv(
-            os.path.join(results_dir, "potential_sales.csv")
+        potential_sales.sort_values('potential_revenue', ascending=False).head(10).to_parquet(
+            os.path.join(results_dir, "potential_sales.parquet")
         )
         
         # 3. Sales forecasting
@@ -66,7 +67,7 @@ def main():
         
         # Choose forecasting method
         # Methods: 'prophet', 'xgboost', 'autogluon', 'average'
-        forecast_method = 'autogluon'
+        forecast_method = 'autogluon'  # Используем метод autogluon
         print(f"Using {forecast_method} forecasting method")
         
         # Список целевых переменных для прогнозирования
@@ -77,30 +78,68 @@ def main():
         os.makedirs(models_dir, exist_ok=True)
         
         # Forecasting with AutoGluon (uses SKU-level data)
-        if forecast_method == 'autogluon':
-            # Для каждой целевой переменной делаем прогнозирование
-            for target_variable in target_variables:
-                print(f"\n--- Forecasting for target: {target_variable} ---")
-                # Prepare data grouped by SKU for AutoGluon
-                print("Preparing time series data with SKU grouping...")
-                ts_data_sku = prepare_time_series(consolidated_data, freq='M', group_by_sku=True)
+        for target_variable in target_variables:
+            print(f"\n--- Forecasting for target: {target_variable} ---")
+            # Prepare data grouped by SKU for AutoGluon
+            print("Preparing time series data with SKU grouping...")
+            ts_data_sku = prepare_time_series(consolidated_data, freq='M', group_by_sku=True)
+            
+            # If there are too many SKUs, we might want to filter to top ones
+            unique_skus = ts_data_sku['item_id'].nunique()
+            print(f"Found {unique_skus} unique SKUs")
+            
+            # Фильтруем до топ-200 SKU
+            print(f"Filtering to focus on top 200 SKUs...")
+            # Get top SKUs by the current target variable
+            top_skus = get_top_performers(consolidated_data, 'sku', target_variable, n=200)
+            
+            # Обеспечиваем соответствие форматов
+            # Выводим первые несколько строк для отладки
+            print(f"Top SKUs (first 5): {top_skus['sku'].head().tolist()}")
+            print(f"Time series item_id (first 5): {ts_data_sku['item_id'].head().tolist()}")
+            
+            # Преобразуем идентификаторы к одному формату для правильного сопоставления
+            top_sku_list = top_skus['sku'].astype(str).tolist()
+            
+            # Преобразуем item_id к такому же формату как sku для сравнения
+            ts_data_sku['item_id_str'] = ts_data_sku['item_id'].astype(str)
+            
+            # Фильтруем временные ряды
+            filtered_ts = ts_data_sku[ts_data_sku['item_id_str'].isin(top_sku_list)]
+            
+            # Проверяем результаты фильтрации
+            print(f"До фильтрации: {len(ts_data_sku)} строк")
+            print(f"После фильтрации: {len(filtered_ts)} строк")
+            print(f"Количество уникальных SKU после фильтрации: {filtered_ts['item_id'].nunique()}")
+            
+            # Если после фильтрации нет данных или очень мало, используем больше SKU
+            if len(filtered_ts) < 100 or filtered_ts['item_id'].nunique() < 5:
+                print("Слишком мало данных после фильтрации, используем все доступные SKU")
+                filtered_ts = ts_data_sku
+            
+            # Удаляем временный столбец
+            if 'item_id_str' in filtered_ts.columns:
+                filtered_ts = filtered_ts.drop('item_id_str', axis=1)
+            
+            # Сохраняем подготовленные данные для отладки
+            debug_file = os.path.join(results_dir, f"debug_ts_data_{target_variable}.parquet")
+            try:
+                # Преобразуем все строковые столбцы в тип 'string' для pyarrow
+                ts_to_save = filtered_ts.copy()
+                for col in ts_to_save.columns:
+                    if ts_to_save[col].dtype == 'object':
+                        ts_to_save[col] = ts_to_save[col].astype('string')
                 
-                # If there are too many SKUs, we might want to filter to top ones
-                unique_skus = ts_data_sku['item_id'].nunique()
-                print(f"Found {unique_skus} unique SKUs")
-                
-                if unique_skus > 150:  # Увеличено с 50 до 150
-                    print(f"Filtering to focus on top 150 SKUs...")  # Увеличено с 50 до 150
-                    # Get top SKUs by the current target variable
-                    top_skus = get_top_performers(consolidated_data, 'sku', target_variable, n=150)  # Увеличено с 50 до 150
-                    top_sku_list = top_skus['sku'].astype(str).tolist()
-                    print(f"Filtered to top {len(top_sku_list)} SKUs")
-                    ts_data_sku = ts_data_sku[ts_data_sku['item_id'].isin(top_sku_list)]
-                
-                # Run the AutoGluon forecast
-                print(f"Running AutoGluon forecast for {target_variable}...")
+                save_data(ts_to_save, debug_file)
+                print(f"Saved debug data to {debug_file}")
+            except Exception as e:
+                print(f"Warning: Could not save debug data: {e}")
+            
+            # Run the AutoGluon forecast
+            print(f"Running AutoGluon forecast for {target_variable}...")
+            try:
                 forecast_result = forecast_sales(
-                    ts_data_sku,
+                    filtered_ts,
                     periods=12,
                     method=forecast_method,
                     target=target_variable,
@@ -112,111 +151,65 @@ def main():
                 # Process and save the results
                 if not forecast_result.empty:
                     print("Saving forecast results...")
-                    forecast_result.to_csv(
-                        os.path.join(results_dir, f"forecast_{forecast_method}_{target_variable}.csv"), 
-                        index=False
-                    )
-                    
-                    # Aggregate across all SKUs if needed
-                    if 'item_id' in forecast_result.columns:
-                        print("Aggregating forecast across all SKUs...")
-                        agg_cols = [col for col in forecast_result.columns 
-                                   if col not in ['item_id', 'timestamp']]
-                        agg_forecast = forecast_result.groupby('timestamp')[agg_cols].sum().reset_index()
-                        agg_forecast.to_csv(
-                            os.path.join(results_dir, f"agg_forecast_{forecast_method}_{target_variable}.csv"), 
-                            index=False
-                        )
-                        print(f"\nAggregate forecast for {target_variable} across all SKUs:")
-                        print(agg_forecast)
+                    try:
+                        # Преобразуем все строковые столбцы в тип 'string' для pyarrow
+                        forecast_to_save = forecast_result.copy()
+                        for col in forecast_to_save.columns:
+                            if forecast_to_save[col].dtype == 'object':
+                                forecast_to_save[col] = forecast_to_save[col].astype('string')
+                        
+                        save_data(forecast_to_save, os.path.join(results_dir, f"forecast_{forecast_method}_{target_variable}.parquet"))
+                        print(f"Saved forecast results to: forecast_{forecast_method}_{target_variable}.parquet")
+                        
+                        # Aggregate across all SKUs if needed
+                        if 'item_id' in forecast_result.columns:
+                            print("Aggregating forecast across all SKUs...")
+                            agg_cols = [col for col in forecast_result.columns 
+                                      if col not in ['item_id', 'timestamp']]
+                            agg_forecast = forecast_result.groupby('timestamp')[agg_cols].sum().reset_index()
+                            
+                            # Сохраняем агрегированный прогноз
+                            save_data(agg_forecast, os.path.join(results_dir, f"agg_forecast_{forecast_method}_{target_variable}.parquet"))
+                            print(f"Saved aggregate forecast to: agg_forecast_{forecast_method}_{target_variable}.parquet")
+                            print(f"\nAggregate forecast for {target_variable} across all SKUs:")
+                            print(agg_forecast)
+                    except Exception as e:
+                        print(f"Error saving forecast: {e}")
                 else:
-                    print("No forecast results were returned")
-        
-        # Traditional forecasting methods (global data)
-        else:
-            # Для каждой целевой переменной делаем прогнозирование
-            for target_variable in target_variables:
-                print(f"\n--- Forecasting for target: {target_variable} with {forecast_method} ---")
-                # Prepare global time series (not grouped by SKU)
-                print("Preparing global time series data...")
+                    print(f"Warning: Empty forecast results for {target_variable}")
+                    # Попробуем использовать среднее значение
+                    print("Falling back to average forecast method...")
+                    time_series_global = prepare_time_series(consolidated_data, freq='M', group_by_sku=False)
+                    fallback_forecast = forecast_sales(
+                        time_series_global,
+                        periods=12,
+                        method='average',
+                        target=target_variable
+                    )
+                    if not fallback_forecast.empty:
+                        fallback_to_save = fallback_forecast.copy()
+                        if isinstance(fallback_to_save.index, pd.DatetimeIndex):
+                            fallback_to_save = fallback_to_save.reset_index()
+                        save_data(fallback_to_save, os.path.join(results_dir, f"forecast_fallback_{target_variable}.parquet"))
+                        print(f"Saved fallback forecast to: forecast_fallback_{target_variable}.parquet")
+            except Exception as e:
+                print(f"Error in forecasting with AutoGluon: {e}")
+                import traceback
+                traceback.print_exc()
+                print("Falling back to average forecast method...")
                 time_series_global = prepare_time_series(consolidated_data, freq='M', group_by_sku=False)
-                
-                # Save the prepared time series
-                if isinstance(time_series_global.index, pd.DatetimeIndex):
-                    time_series_global.reset_index().to_csv(
-                        os.path.join(results_dir, f"time_series_global_{target_variable}.csv"), 
-                        index=False
-                    )
-                else:
-                    time_series_global.to_csv(
-                        os.path.join(results_dir, f"time_series_global_{target_variable}.csv"), 
-                        index=False
-                    )
-                
-                # Run the forecast
-                print(f"Running {forecast_method} forecast...")
-                forecast_result = forecast_sales(
+                fallback_forecast = forecast_sales(
                     time_series_global,
                     periods=12,
-                    method=forecast_method,
+                    method='average',
                     target=target_variable
                 )
-                
-                # Process and save results
-                if not forecast_result.empty:
-                    print("Saving forecast results...")
-                    if isinstance(forecast_result.index, pd.DatetimeIndex):
-                        forecast_result.reset_index().to_csv(
-                            os.path.join(results_dir, f"forecast_{forecast_method}_{target_variable}.csv"), 
-                            index=False
-                        )
-                    else:
-                        forecast_result.to_csv(
-                            os.path.join(results_dir, f"forecast_{forecast_method}_{target_variable}.csv"), 
-                            index=False
-                        )
-                    
-                    print(f"\nForecast for {target_variable} next 12 months:")
-                    if hasattr(forecast_result, 'tail'):
-                        print(forecast_result.tail(12))
-                    else:
-                        print(forecast_result)
-                else:
-                    print(f"No forecast results were returned for {target_variable}")
-        
-        # 4. Category-level forecasting (optional)
-        run_category_forecasts = False
-        if run_category_forecasts:
-            # Для каждой целевой переменной делаем прогнозирование по категориям
-            for target_variable in target_variables:
-                print(f"\n4. Forecasting {target_variable} by product category...")
-                category_forecasts = forecast_by_segment(
-                    consolidated_data,
-                    'category',
-                    periods=12,
-                    method=forecast_method,
-                    target=target_variable
-                )
-                
-                # Save category forecasts
-                for category, forecast in category_forecasts.items():
-                    if not forecast.empty:
-                        print(f"\nForecast for category: {category}")
-                        print(forecast.tail(12) if hasattr(forecast, 'tail') else forecast)
-                        
-                        # Save to CSV
-                        filename = f"forecast_{category}_{forecast_method}_{target_variable}.csv"
-                        filename = filename.replace(" ", "_").replace("/", "_")
-                        if isinstance(forecast.index, pd.DatetimeIndex):
-                            forecast.reset_index().to_csv(
-                                os.path.join(results_dir, filename), 
-                                index=False
-                            )
-                        else:
-                            forecast.to_csv(
-                                os.path.join(results_dir, filename), 
-                                index=False
-                            )
+                if not fallback_forecast.empty:
+                    fallback_to_save = fallback_forecast.copy()
+                    if isinstance(fallback_to_save.index, pd.DatetimeIndex):
+                        fallback_to_save = fallback_to_save.reset_index()
+                    save_data(fallback_to_save, os.path.join(results_dir, f"forecast_fallback_{target_variable}.parquet"))
+                    print(f"Saved fallback forecast to: forecast_fallback_{target_variable}.parquet")
         
         # 5. Generate trend reports
         print("\n5. Generating trend reports...")
@@ -234,15 +227,15 @@ def main():
         top_clients = get_top_performers(consolidated_data, 'client_id', 'final_price')
         print("\nTop 10 clients by revenue:")
         print(top_clients)
-        top_clients.to_csv(os.path.join(results_dir, "top_clients.csv"))
+        save_data(top_clients, os.path.join(results_dir, "top_clients.parquet"))
         
         # Top SKUs by quantity
         top_skus = get_top_performers(consolidated_data, 'sku', 'quantity')
         print("\nTop 10 SKUs by quantity:")
         print(top_skus)
-        top_skus.to_csv(os.path.join(results_dir, "top_skus.csv"))
+        save_data(top_skus, os.path.join(results_dir, "top_skus.parquet"))
         
-        print("\nAnalysis complete! Results saved to CSV files.")
+        print("\nAnalysis complete! Results saved to parquet files.")
         
     except Exception as e:
         print(f"Error in analysis: {e}")
