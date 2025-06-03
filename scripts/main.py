@@ -140,7 +140,7 @@ def main():
             try:
                 forecast_result = forecast_sales(
                     filtered_ts,
-                    periods=12,
+                    periods=6,
                     method=forecast_method,
                     target=target_variable,
                     item_id_col='item_id',
