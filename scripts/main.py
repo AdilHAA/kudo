@@ -140,12 +140,14 @@ def main():
             try:
                 forecast_result = forecast_sales(
                     filtered_ts,
-                    periods=6,
+                    periods=6,  # Прогнозируем на 6 месяцев вместо 12
                     method=forecast_method,
                     target=target_variable,
                     item_id_col='item_id',
                     timestamp_col='date_key',
-                    models_dir=models_dir  # Передаем путь к каталогу для моделей
+                    models_dir=models_dir,  # Передаем путь к каталогу для моделей
+                    # Дополнительные параметры для улучшения качества
+                    min_ts_length=12  # Требуется минимум 12 точек исторических данных
                 )
                 
                 # Process and save the results

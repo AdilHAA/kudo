@@ -398,9 +398,26 @@ def create_training_callback():
     return training_callback
 
 
-def forecast_sales_autogluon(time_series_df, periods=12, target='final_price', item_id_col='item_id', timestamp_col='date_key', models_dir='models'):
+def forecast_sales_autogluon(time_series_df, periods=12, target='final_price', item_id_col='item_id', timestamp_col='date_key', models_dir='models', min_ts_length=None):
     """
     Прогнозирование продаж с использованием AutoGluon TimeSeries.
+    
+    Parameters:
+    -----------
+    time_series_df : pd.DataFrame
+        Датафрейм с временными рядами
+    periods : int
+        Количество периодов для прогноза
+    target : str
+        Целевая переменная для прогноза
+    item_id_col : str
+        Название колонки с идентификатором товара
+    timestamp_col : str
+        Название колонки с временными метками
+    models_dir : str
+        Путь для сохранения моделей
+    min_ts_length : int, optional
+        Минимальная длина временного ряда (количество точек) для включения в прогнозирование
     """
     try:
         from autogluon.timeseries import TimeSeriesDataFrame, TimeSeriesPredictor
@@ -429,6 +446,22 @@ def forecast_sales_autogluon(time_series_df, periods=12, target='final_price', i
         )
         
         print(f"Prepared AutoGluon data with {ts_data.num_items} time series")
+        
+        # Фильтрация коротких временных рядов если задан min_ts_length
+        if min_ts_length is not None and min_ts_length > 0:
+            # Считаем количество точек для каждого ряда
+            ts_lengths = ts_data.num_timesteps_per_item().to_dict()
+            
+            # Находим ряды с достаточным количеством точек
+            valid_items = [item_id for item_id, length in ts_lengths.items() if length >= min_ts_length]
+            
+            # Фильтруем данные
+            if valid_items:
+                print(f"Filtering time series: {ts_data.num_items} → {len(valid_items)} items " +
+                      f"(removed {ts_data.num_items - len(valid_items)} with < {min_ts_length} points)")
+                ts_data = ts_data.loc[valid_items]
+            else:
+                print(f"Warning: No time series with >= {min_ts_length} points found!")
         
         # Регуляризация временных рядов с ежемесячной частотой (MS - month start)
         try:
@@ -468,7 +501,9 @@ def forecast_sales_autogluon(time_series_df, periods=12, target='final_price', i
             ts_data,
             presets="best_quality",
             time_limit=3600,  
-            verbosity=2  # Умеренный уровень подробности
+            verbosity=2,  # Умеренный уровень подробности
+            # Исключаем проблемные модели
+            excluded_model_types=['DynamicOptimizedTheta']
         )
         
         print("=" * 80)
@@ -559,7 +594,11 @@ def forecast_sales(time_series, periods=12, method='prophet', target='final_pric
         item_id_col = kwargs.get('item_id_col', 'item_id')
         timestamp_col = kwargs.get('timestamp_col', 'date_key')
         models_dir = kwargs.get('models_dir', 'models')
-        return forecast_sales_autogluon(time_series, periods, target, item_id_col, timestamp_col, models_dir)
+        min_ts_length = kwargs.get('min_ts_length', None)
+        return forecast_sales_autogluon(
+            time_series, periods, target, item_id_col, 
+            timestamp_col, models_dir, min_ts_length
+        )
     elif method == 'average':
         return forecast_sales_average(time_series, periods, target)
     else:
